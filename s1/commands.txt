@@ -1,3 +1,13 @@
-table_add MyIngress.ipv4_encap_lpm ipv4_encap 10.0.0.2/24 0&&&128 => 204 2 00:01:02:03:04:22
-table_add MyIngress.ipv4_encap_lpm ipv4_encap 10.0.0.2/24 128&&&128 => 187 2 00:01:02:03:04:22
-table_add MyIngress.ipv4_encap_lpm ipv4_encap 10.0.0.2/24 *&&&* => 221 2 00:01:02:03:04:22
+table_add MyIngress.ipv4_encap_lpm ipv4_encap 10.0.2.2/24 0x0&&&0x0 => 13 2 00:01:02:03:04:22 3
+
+table_add MyIngress.ipv4_encap_lpm ipv4_encap 10.0.3.3/24 0&&&0x80 => 170 2 00:01:02:03:04:33 2
+table_add MyIngress.ipv4_encap_lpm ipv4_encap 10.0.3.3/24 0x80&&&0x80 => 187 2 00:01:02:03:04:33 1
+
+table_add MyIngress.tunnel_exact tunnel_pop 10 => 1 
+table_add MyIngress.tunnel_exact tunnel_pop 11 => 1
+table_add MyIngress.tunnel_exact tunnel_pop 14 => 1
+
+
+table_dump MyIngress.ipv4_encap_lpm
+table_dump MyIngress.ipv4_srv_encap_lpm
+table_dump MyIngress.tunnel_exact

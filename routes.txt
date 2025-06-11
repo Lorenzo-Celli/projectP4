@@ -1,0 +1,26 @@
+h1 to h3 low prio
+	route: h1-->s1-->s2-->s5-->s6-->s7-->h3
+	TID: 170
+h1 to h3 high prio
+	route: h1-->s1-->s2-->s6-->s7-->h3
+	TID: 187
+h1 to h2
+	route: h1-->s1-->s2-->s4-->s3-->h2
+	TID: 13
+
+h3 to h1 low prio
+	route: h3-->s7-->s6-->s5-->s2-->s1-->h1
+	TID: 10
+h3 to h1 high prio
+	route: h3-->s7-->s6-->s2-->s1-->h1
+	TID: 11
+h3 to h2
+	route: h3-->s7-->s6-->s4-->s3-->h2
+	TID: 12
+
+h2 to h1
+	route: h2-->s3-->s4-->s2-->s1-->h1
+	TID: 14
+h2 to h3
+	route: h2-->s3-->s4-->s6-->s7-->h3
+	TID: 15

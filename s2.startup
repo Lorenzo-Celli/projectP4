@@ -1,4 +1,5 @@
 p4c /shared/tunnelPoT.p4 -o /
+#simple_switch --log-file /shared/s2.log -i 1@eth0 -i 2@eth1 -i 3@eth2 -i 4@eth3 tunnelPoT.json &
 simple_switch -i 1@eth0 -i 2@eth1 -i 3@eth2 -i 4@eth3 tunnelPoT.json &
 
 while [[ $(pgrep simple_switch) -eq 0 ]]; do sleep 1; done
