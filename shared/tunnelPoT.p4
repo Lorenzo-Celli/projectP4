@@ -4,16 +4,19 @@
 
 const bit<16> TYPE_MYTUNNEL = 0x1212;
 const bit<16> TYPE_IPV4 = 0x800;
+const bit<16> TYPE_VAL = 0x1213;
 
+#define MAX_HOPS 9
 /*************************************************************************
 *********************** H E A D E R S  ***********************************
 *************************************************************************/
 
 typedef bit<9>  egressSpec_t;
+typedef bit<48> macAddr_t;
 
 header ethernet_t {
-    bit<48> dstAddr;
-    bit<48> srcAddr;
+    macAddr_t dstAddr;
+    macAddr_t srcAddr;
     bit<16> etherType;
 }
 
@@ -38,21 +41,42 @@ header ipv4_t {
     bit<32> dstAddr;
 }
 
+header validation_start_t{
+    bit<16> proto_id;
+    bit<8> count;
+}
+
+header validation_t {
+    bit<8> hop_value; 
+}
+
+struct parser_metadata_t {
+    bit<8>  remaining;
+}
+
+struct vld_sum_metadata_t {
+    bit<16>  total;
+}
+
+
 struct metadata {
-    /* empty */
+    parser_metadata_t   parser_metadata;
+    vld_sum_metadata_t  vld_sum_metadata;
 }
 
 // NOTE: Added new header type to headers struct
 struct headers {
-    ethernet_t ethernet;
-    tunnel_t tunnel;
-    ipv4_t ipv4;
+    ethernet_t              ethernet;
+    tunnel_t                tunnel;
+    ipv4_t                  ipv4;
+    validation_start_t      validation;
+    validation_t[MAX_HOPS]  vld_stack;
 }
 
 /*************************************************************************
 *********************** P A R S E R  ***********************************
 *************************************************************************/
-
+//TODO dare la possibilità di skippare il tunnel dopo valid e passare diretto ad ipv4
 parser MyParser(packet_in packet,
                 out headers hdr,
                 inout metadata meta,
@@ -67,8 +91,31 @@ parser MyParser(packet_in packet,
         transition select(hdr.ethernet.etherType) {
             TYPE_MYTUNNEL : parse_tunnel;
             TYPE_IPV4 : parse_ipv4;
+            TYPE_VAL : parse_validation;
             default : accept;
         }
+    }
+
+    state parse_validation {
+        packet.extract(hdr.validation);
+        meta.parser_metadata.remaining = hdr.validation.count;
+        transition select(meta.parser_metadata.remaining){
+            0 : parse_tunnel;
+            default : parse_vld_stack;
+        }
+    }
+
+    state parse_vld_stack{
+        packet.extract(hdr.vld_stack.next);
+        meta.parser_metadata.remaining = meta.parser_metadata.remaining - 1;
+        bit<16> tmp = (bit<16>) hdr.vld_stack.next.hop_value;
+        meta.vld_sum_metadata.total = 
+                meta.vld_sum_metadata.total + tmp;
+        transition select(meta.parser_metadata.remaining){
+            0 : parse_tunnel;
+            default : parse_vld_stack;
+        }
+
     }
 
     state parse_tunnel {
@@ -108,7 +155,7 @@ control MyIngress(inout headers hdr,
         mark_to_drop(standard_metadata);
     }
 
-    action ipv4_encap(bit<16> t_id, bit<9> port, bit<48> dstAddr){
+    action ipv4_encap(bit<16> t_id, bit<9> port, macAddr_t dstAddr){
         hdr.tunnel.setValid();
         
         hdr.tunnel.t_id = t_id; 
