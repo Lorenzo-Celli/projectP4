@@ -1,10 +1,7 @@
-table_add MyIngress.tunnel_exact tunnel_forward 14 => 1
-table_add MyIngress.tunnel_exact tunnel_forward 15 => 3
-
-table_add MyIngress.tunnel_exact tunnel_forward 12 => 2
-
-table_add MyIngress.tunnel_exact tunnel_forward 13 => 2 
+table_add MyIngress.tunnel_exact pkt_forward 14 => 1 16
+table_add MyIngress.tunnel_exact pkt_forward 15 => 3 27
+table_add MyIngress.tunnel_exact pkt_forward 12 => 2 2
+table_add MyIngress.tunnel_exact pkt_forward 13 => 2 2
 
 table_dump MyIngress.ipv4_encap_lpm
-table_dump MyIngress.ipv4_srv_encap_lpm
 table_dump MyIngress.tunnel_exact

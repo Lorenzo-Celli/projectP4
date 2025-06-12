@@ -42,7 +42,6 @@ header ipv4_t {
 }
 
 header validation_start_t{
-    bit<16> proto_id;
     bit<8> count;
 }
 
@@ -54,17 +53,21 @@ struct parser_metadata_t {
     bit<8>  remaining;
 }
 
-struct vld_sum_metadata_t {
-    bit<16>  total;
+struct vld_thd_metadata_t {
+    bit<16> sum;
+    bit<16> curr_thd;  
 }
 
+struct pop_flag_metadata_t{
+    bit<1> flg;
+}
 
 struct metadata {
-    parser_metadata_t   parser_metadata;
-    vld_sum_metadata_t  vld_sum_metadata;
+    parser_metadata_t       parser_metadata;
+    vld_thd_metadata_t      vld_thd_metadata;
+    pop_flag_metadata_t     pop_flag_metadata; 
 }
 
-// NOTE: Added new header type to headers struct
 struct headers {
     ethernet_t              ethernet;
     tunnel_t                tunnel;
@@ -76,7 +79,6 @@ struct headers {
 /*************************************************************************
 *********************** P A R S E R  ***********************************
 *************************************************************************/
-//TODO dare la possibilità di skippare il tunnel dopo valid e passare diretto ad ipv4
 parser MyParser(packet_in packet,
                 out headers hdr,
                 inout metadata meta,
@@ -108,9 +110,8 @@ parser MyParser(packet_in packet,
     state parse_vld_stack{
         packet.extract(hdr.vld_stack.next);
         meta.parser_metadata.remaining = meta.parser_metadata.remaining - 1;
-        bit<16> tmp = (bit<16>) hdr.vld_stack.next.hop_value;
-        meta.vld_sum_metadata.total = 
-                meta.vld_sum_metadata.total + tmp;
+        meta.vld_thd_metadata.sum = 
+                meta.vld_thd_metadata.sum + (bit<16>)hdr.vld_stack.last.hop_value;
         transition select(meta.parser_metadata.remaining){
             0 : parse_tunnel;
             default : parse_vld_stack;
@@ -155,14 +156,21 @@ control MyIngress(inout headers hdr,
         mark_to_drop(standard_metadata);
     }
 
-    action ipv4_encap(bit<16> t_id, bit<9> port, macAddr_t dstAddr){
+    action ipv4_encap(bit<16> t_id, bit<9> port, macAddr_t dstAddr, bit<8> hop_value){
+        hdr.ethernet.etherType = TYPE_VAL;
+        hdr.ethernet.dstAddr = dstAddr;
+
+        hdr.validation.setValid();
+        hdr.validation.count = 1;
+
+        hdr.vld_stack.push_front(1);
+        hdr.vld_stack[0].setValid();
+        hdr.vld_stack[0].hop_value = hop_value;
+
         hdr.tunnel.setValid();
-        
         hdr.tunnel.t_id = t_id; 
         hdr.tunnel.proto_id = TYPE_IPV4;
 
-        hdr.ethernet.etherType = TYPE_MYTUNNEL;
-        hdr.ethernet.dstAddr = dstAddr;
         standard_metadata.egress_spec = port;
     }
 
@@ -177,18 +185,22 @@ control MyIngress(inout headers hdr,
             NoAction;
         }
         size = 1024;
-        default_action = NoAction();
+        default_action = drop();
     }
 
-    action tunnel_forward(egressSpec_t port){
+    action pkt_forward(egressSpec_t port, bit<8> hop_value){
+        hdr.validation.count = hdr.validation.count + 1;
+        hdr.vld_stack.push_front(1);
+        hdr.vld_stack[0].setValid();
+        hdr.vld_stack[0].hop_value = hop_value;
+
         standard_metadata.egress_spec = port;
     }
 
-    action tunnel_pop(egressSpec_t port){
-        hdr.tunnel.setInvalid();
-
-        hdr.ethernet.etherType = TYPE_IPV4;
+    action set_pop_param(egressSpec_t port, bit<16> threshold){
+        meta.vld_thd_metadata.curr_thd = threshold;
         standard_metadata.egress_spec = port;
+        meta.pop_flag_metadata.flg = 1;
     }
 
     table tunnel_exact{
@@ -196,25 +208,48 @@ control MyIngress(inout headers hdr,
             hdr.tunnel.t_id : exact;
         }
         actions = {
-            tunnel_forward;
-            tunnel_pop;
+            pkt_forward;
+            set_pop_param;
             drop;
             NoAction;
         }
         size = 1024;
-        default_action = NoAction();
+        default_action = drop();
     }
+
+    action pop_all(){
+        hdr.tunnel.setInvalid();
+
+        hdr.validation.setInvalid();
+        hdr.vld_stack[0].setInvalid();
+        hdr.vld_stack[1].setInvalid();
+        hdr.vld_stack[2].setInvalid();
+        hdr.vld_stack[3].setInvalid();
+        hdr.vld_stack[4].setInvalid();
+        hdr.vld_stack[5].setInvalid();
+        hdr.vld_stack[6].setInvalid();
+        hdr.vld_stack[7].setInvalid();
+        hdr.vld_stack[8].setInvalid();
+
+        hdr.ethernet.etherType = TYPE_IPV4;
+    }
+
 
     apply {
 
-        if (hdr.ipv4.isValid() && !hdr.tunnel.isValid()) {
+        if (hdr.ipv4.isValid() && !hdr.tunnel.isValid() && !hdr.vld_stack[0].isValid()) {
             ipv4_encap_lpm.apply();
-        }
-
-        if (hdr.tunnel.isValid()){
+        }else if (hdr.tunnel.isValid() && hdr.validation.isValid() && hdr.vld_stack[0].isValid()){
             tunnel_exact.apply();
+            if (meta.pop_flag_metadata.flg == 1){
+                if(meta.vld_thd_metadata.sum >= meta.vld_thd_metadata.curr_thd){
+                    pop_all();                    
+                }else {
+                    drop();
+                }
+            }
         }
-    }
+    }  
 }
 
 /*************************************************************************
@@ -224,7 +259,7 @@ control MyIngress(inout headers hdr,
 control MyEgress(inout headers hdr,
                  inout metadata meta,
                  inout standard_metadata_t standard_metadata) {
-    apply {  }
+    apply {    }
 }
 
 /*************************************************************************
@@ -258,6 +293,8 @@ control MyComputeChecksum(inout headers  hdr, inout metadata meta) {
 control MyDeparser(packet_out packet, in headers hdr) {
     apply {
         packet.emit(hdr.ethernet);
+        packet.emit(hdr.validation);
+        packet.emit(hdr.vld_stack);
         packet.emit(hdr.tunnel);
         packet.emit(hdr.ipv4);
     }
