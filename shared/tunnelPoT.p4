@@ -5,6 +5,8 @@
 const bit<16> TYPE_MYTUNNEL = 0x1212;
 const bit<16> TYPE_IPV4 = 0x800;
 const bit<16> TYPE_VAL = 0x1213;
+const bit<16> TYPE_ARP = 0x0806;
+const bit<48> FAKE_MAC = 0x000102030437;
 
 #define MAX_HOPS 9
 /*************************************************************************
@@ -41,6 +43,18 @@ header ipv4_t {
     bit<32> dstAddr;
 }
 
+header arp_t {
+    bit<16>     htype;
+    bit<16>     ptype;
+    bit<8>      hlen;
+    bit<8>      plen;
+    bit<16>     oper;
+    macAddr_t   sha;
+    bit<32>     spa;
+    macAddr_t   tha;
+    bit<32>     tpa;
+}
+
 header validation_start_t{
     bit<8> count;
 }
@@ -72,6 +86,7 @@ struct headers {
     ethernet_t              ethernet;
     tunnel_t                tunnel;
     ipv4_t                  ipv4;
+    arp_t                   arp;
     validation_start_t      validation;
     validation_t[MAX_HOPS]  vld_stack;
 }
@@ -91,11 +106,17 @@ parser MyParser(packet_in packet,
     state parse_ethernet {
         packet.extract(hdr.ethernet);
         transition select(hdr.ethernet.etherType) {
+            TYPE_ARP : parse_arp;
             TYPE_MYTUNNEL : parse_tunnel;
             TYPE_IPV4 : parse_ipv4;
             TYPE_VAL : parse_validation;
             default : accept;
         }
+    }
+
+    state parse_arp{
+        packet.extract(hdr.arp);
+        transition accept;
     }
 
     state parse_validation {
@@ -234,21 +255,33 @@ control MyIngress(inout headers hdr,
         hdr.ethernet.etherType = TYPE_IPV4;
     }
 
+    action arp_reply(){
+        log_msg("porcaccio dio cane");
+        bit<32> tmp;
+        hdr.arp.tha = hdr.arp.sha; 
+        hdr.arp.sha = FAKE_MAC;
+        hdr.arp.oper = 2;
+        tmp = hdr.arp.spa;
+        hdr.arp.spa = hdr.arp.tpa;
+        hdr.arp.tpa = tmp;
+        standard_metadata.egress_spec = 1;
+    }
 
     apply {
-
-        if (hdr.ipv4.isValid() && !hdr.tunnel.isValid() && !hdr.vld_stack[0].isValid()) {
-            ipv4_encap_lpm.apply();
-        }else if (hdr.tunnel.isValid() && hdr.validation.isValid() && hdr.vld_stack[0].isValid()){
-            tunnel_exact.apply();
-            if (meta.pop_flag_metadata.flg == 1){
-                if(meta.vld_thd_metadata.sum >= meta.vld_thd_metadata.curr_thd){
-                    pop_all();                    
-                }else {
-                    drop();
+        if (hdr.arp.isValid()){
+            arp_reply();
+        }else if (hdr.ipv4.isValid() && !hdr.tunnel.isValid() && !hdr.vld_stack[0].isValid()) {
+                ipv4_encap_lpm.apply();
+            }else if (hdr.tunnel.isValid() && hdr.validation.isValid() && hdr.vld_stack[0].isValid()){
+                tunnel_exact.apply();
+                if (meta.pop_flag_metadata.flg == 1){
+                    if(meta.vld_thd_metadata.sum >= meta.vld_thd_metadata.curr_thd){
+                        pop_all();                    
+                    }else {
+                        drop();
+                    }
                 }
             }
-        }
     }  
 }
 
@@ -293,6 +326,7 @@ control MyComputeChecksum(inout headers  hdr, inout metadata meta) {
 control MyDeparser(packet_out packet, in headers hdr) {
     apply {
         packet.emit(hdr.ethernet);
+        packet.emit(hdr.arp);
         packet.emit(hdr.validation);
         packet.emit(hdr.vld_stack);
         packet.emit(hdr.tunnel);
